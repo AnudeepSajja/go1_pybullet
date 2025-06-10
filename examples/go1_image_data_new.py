@@ -5,8 +5,8 @@ import random
 from mim_data_utils import DataLogger
 from robot_properties_go1.go1_wrapper import Go1Robot, Go1Config
 from mpc.go1_cyclic_gen import Go1MpcGaitGen
-from motions.cyclic.go1_motion import trot, jump, stand, bound, walk, trot_turn
-from envs.pybullet_env import PyBulletEnv
+from motions.cyclic.go1_motion import trot, jump, stand, bound
+from envs.pybullet_terrain_env import PyBulletTerrainEnv
 from controllers.robot_id_controller import InverseDynamicsController
 import csv
 
@@ -25,11 +25,9 @@ x0 = np.concatenate([q0, pin.utils.zero(pin_robot.model.nv)])
 
 f_arr = ["FL_foot_fixed", "FR_foot_fixed", "RL_foot_fixed", "RR_foot_fixed"] 
 
-v_des = np.array([0.3,0.1,0.0])  # 0.56 - jump, 0.7 - bound, 0.8 - trot
-# v1 = np.array([0.38, 0.0, 0.0])
-# v2 = np.array([0.56, 0.0, 0.0])
-
+v_des = np.array([0.46,0.0,0.0])
 w_des = 0.0
+
 plan_freq = 0.05
 update_time = 0.0
 
@@ -45,7 +43,7 @@ gg = Go1MpcGaitGen(pin_robot, urdf_path, x0, plan_freq, q0, None)
 
 gg.update_gait_params(gait_params, sim_t)
 
-robot = PyBulletEnv(Go1Robot, q0, v0)
+robot = PyBulletTerrainEnv(Go1Robot, q0, v0)
 
 robot_id_ctrl = InverseDynamicsController(pin_robot, f_arr)
 robot_id_ctrl.set_gains(gait_params.kp, gait_params.kd)
@@ -53,7 +51,6 @@ robot_id_ctrl.set_gains(gait_params.kp, gait_params.kd)
 trj = 15 * 1000
 
 simulation_time = trj + 1
-
 
 foot_contacts = []
 motor_positions = []
@@ -80,13 +77,7 @@ base_pos_buffer = np.zeros((3, traj_length), dtype=np.float32)
 base_vel_buffer = np.zeros((3, traj_length), dtype=np.float32)
 base_orn_buffer = np.zeros((4, traj_length), dtype=np.float32)
 
-# print(motor_position_buffer.shape)
-# print(foot_forces_buffer.shape)
-
-
-
 torques_data_buffer = np.zeros((12, traj_length), dtype=np.float32)
-
 
 
 buffer_index = 0
@@ -94,35 +85,15 @@ buffer_index = 0
 state_id = robot.saveState()
 num_failure = 0
 
+
 # robot.start_recording('go1_trot_nmpc.mp4')
 
 for o in range(simulation_time):    
+    # Capture an image and save data for every 100th iteration 
+    if o % 100 == 0:
+            robot.save_image(o)
 
     q, v = robot.get_state()
-    
-    # recod the data
-    
-    foot_contact = robot.get_current_contacts()
-    imu_gyro, imu_acc, imu_pos, imu_vel = robot.get_imu_data()
-    qj, dqj = robot.get_state()
-    base_pos = np.array(qj[0:3])
-    base_orn = np.array(qj[3:7])
-    motor_pos = np.array(qj[7:])
-    base_vel = np.array(dqj[0:3])
-    motors_vel = np.array(dqj[6:])
-
-    # --- Store sensor data to buffers ---
-    foot_contact_buffer[:, buffer_index] = foot_contact
-    motor_position_buffer[:, buffer_index] = motor_pos
-    motor_velocity_buffer[:, buffer_index] = motors_vel
-    imu_gyro_buffer[:, buffer_index] = imu_gyro
-    imu_acc_buffer[:, buffer_index] = imu_acc
-    base_pos_buffer[:, buffer_index] = base_pos
-    base_vel_buffer[:, buffer_index] = base_vel
-    base_orn_buffer[:, buffer_index] = base_orn
-    
-    # plan the torques
-        
     if pln_ctr == 0:
         contact_configuration = robot.get_current_contacts()
         pr_st = time.time()
@@ -199,6 +170,7 @@ for o in range(simulation_time):
         base_orientations.append(base_orn_buffer)
 
         torques_data.append(torques_data_buffer)
+        
 
 
         # Reset the buffer
@@ -239,7 +211,7 @@ base_orientations_data = np.concatenate(base_orientations, axis=1)
 torques_data_buffer = np.concatenate(torques_data, axis=1)
 
 # Define the path for saving
-path = "/home/anudeep/devel/workspace/src/data/out_distri/"
+path = "/home/anudeep/devel/workspace/data_humanoids/trot/"
 
 # Check the shapes of all data arrays before concatenation
 print("Foot Contacts Shape:", foot_contacts_data.shape)
@@ -260,7 +232,7 @@ kv = gait_params.kd
 print("kp:", kp , "kv:", kv)
 
 # Save the data into a csv file
-csv_file = path + 'go1_trot_data_actions_eval_out_disti.csv'
+csv_file = path + 'go1_trot_data_actions_.csv'
 
 with open(csv_file, mode='w', newline='') as file:
     writer = csv.writer(file)

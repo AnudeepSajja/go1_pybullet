@@ -113,9 +113,9 @@ for o in range(10000):
     total_predicted_torques.append(predicted_torques_unnormalized)
 
     # Combine PD torques and predicted torques
-    fin_tau = predicted_torques_unnormalized + tau_pd
+    fin_tau = predicted_torques_unnormalized
 
-    # fin_tau = np.fmin(np.fmax(fin_tau, -20), 20)
+    fin_tau = np.fmin(np.fmax(fin_tau, -20), 20)
 
     # Append the combined torques to the list
     combined_tau.append(fin_tau)

@@ -1,70 +1,267 @@
 import time
 import numpy as np
 import pinocchio as pin
-import csv
-
+import random
+from mim_data_utils import DataLogger
 from robot_properties_go1.go1_wrapper import Go1Robot, Go1Config
 from mpc.go1_cyclic_gen import Go1MpcGaitGen
-from motions.cyclic.go1_motion import trot
+from motions.cyclic.go1_motion import trot, jump, stand, bound, walk, trot_turn
 from envs.pybullet_env import PyBulletEnv
 from controllers.robot_id_controller import InverseDynamicsController
+import csv
 
-# Robot Configuration and Initialization
 pin_robot = Go1Config.buildRobotWrapper()
 urdf_path = Go1Config.urdf_path
+
 rmodel = Go1Config().robot_model
 rdata = rmodel.createData()
 
-# Initial Robot State
 n_eff = 4
 q0 = np.array(Go1Config.initial_configuration)
-q0[0:2] = 0.0  # Resetting the first two joint angles to zero
+q0[0:2] = 0.0
+
 v0 = pin.utils.zero(pin_robot.model.nv)
 x0 = np.concatenate([q0, pin.utils.zero(pin_robot.model.nv)])
 
-# Foot Fixed Names
-f_arr = ["FL_foot_fixed", "FR_foot_fixed", "RL_foot_fixed", "RR_foot_fixed"]
+f_arr = ["FL_foot_fixed", "FR_foot_fixed", "RL_foot_fixed", "RR_foot_fixed"] 
 
-# Desired Velocities
-v_des = np.array([0.5, 0.3, 0.0])
+v_des = np.array([0.3,0.1,0.0])  # 0.56 - jump, 0.7 - bound, 0.8 - trot
+# v1 = np.array([0.38, 0.0, 0.0])
+# v2 = np.array([0.56, 0.0, 0.0])
+
 w_des = 0.0
-motion_name = "trot"
+plan_freq = 0.05
+update_time = 0.0
 
-# Planning Parameters
-plan_freq = 0.05  # seconds 
-update_time = 0.0  # seconds (time of lag)
-lag = int(update_time / 0.001)  # Calculate lag based on simulation time step
-
-# Simulation Parameters
 sim_t = 0.0
 sim_dt = 0.001
+index = 0
 pln_ctr = 0
 
-# Motion Generation
 gait_params = trot
+
+lag = int(update_time/sim_dt)
 gg = Go1MpcGaitGen(pin_robot, urdf_path, x0, plan_freq, q0, None)
+
 gg.update_gait_params(gait_params, sim_t)
 
-# Robot Environment Setup
 robot = PyBulletEnv(Go1Robot, q0, v0)
+
 robot_id_ctrl = InverseDynamicsController(pin_robot, f_arr)
 robot_id_ctrl.set_gains(gait_params.kp, gait_params.kd)
 
-# Simulation Time
-h = 0  # hours
-min = 2  # minutes
-sec = 0  # seconds
+trj = 15 * 1000
 
-simulation_time = (h * 60 * 60 * 1000) + (min * 60 * 1000) + (sec * 1000)  # milliseconds
+simulation_time = trj + 1
 
+
+foot_contacts = []
+motor_positions = []
+motor_velocities = []
+imu_gyros = []
+imu_accs = []
+base_positions = []
+base_velocities = []
+base_orientations = []
+torques_data = []
+
+foot_forces_data = []
+
+
+traj_length = trj
+
+
+foot_contact_buffer = np.zeros((4, traj_length), dtype=np.float32)
+motor_position_buffer = np.zeros((12, traj_length), dtype=np.float32)
+motor_velocity_buffer = np.zeros((12, traj_length), dtype=np.float32)
+imu_gyro_buffer = np.zeros((3, traj_length), dtype=np.float32)
+imu_acc_buffer = np.zeros((3, traj_length), dtype=np.float32)
+base_pos_buffer = np.zeros((3, traj_length), dtype=np.float32)
+base_vel_buffer = np.zeros((3, traj_length), dtype=np.float32)
+base_orn_buffer = np.zeros((4, traj_length), dtype=np.float32)
+
+# print(motor_position_buffer.shape)
+# print(foot_forces_buffer.shape)
+
+
+
+torques_data_buffer = np.zeros((12, traj_length), dtype=np.float32)
+
+
+
+buffer_index = 0
+
+state_id = robot.saveState()
 num_failure = 0
 
-# trajectory_steps = 110 *1000
+# robot.start_recording('go1_trot_nmpc.mp4')
 
-# buffer = trajectory_steps
+for o in range(simulation_time):    
 
-# CSV File Setup
-csv_file = '/home/anudeep/devel/workspace/src/data/go1_trot.csv'
+    q, v = robot.get_state()
+    
+    # recod the data
+    
+    foot_contact = robot.get_current_contacts()
+    imu_gyro, imu_acc, imu_pos, imu_vel = robot.get_imu_data()
+    qj, dqj = robot.get_state()
+    base_pos = np.array(qj[0:3])
+    base_orn = np.array(qj[3:7])
+    motor_pos = np.array(qj[7:])
+    base_vel = np.array(dqj[0:3])
+    motors_vel = np.array(dqj[6:])
+
+    # --- Store sensor data to buffers ---
+    foot_contact_buffer[:, buffer_index] = foot_contact
+    motor_position_buffer[:, buffer_index] = motor_pos
+    motor_velocity_buffer[:, buffer_index] = motors_vel
+    imu_gyro_buffer[:, buffer_index] = imu_gyro
+    imu_acc_buffer[:, buffer_index] = imu_acc
+    base_pos_buffer[:, buffer_index] = base_pos
+    base_vel_buffer[:, buffer_index] = base_vel
+    base_orn_buffer[:, buffer_index] = base_orn
+    
+    # plan the torques
+        
+    if pln_ctr == 0:
+        contact_configuration = robot.get_current_contacts()
+        pr_st = time.time()
+        xs_plan, us_plan, f_plan = gg.optimize(q, v, np.round(sim_t,3), v_des, w_des)
+
+    if o < int(plan_freq/sim_dt) - 1:
+        xs = xs_plan
+        us = us_plan
+        f = f_plan
+
+    elif pln_ctr == lag and o > int(plan_freq/sim_dt)-1:
+        lag = 0
+        xs = xs_plan[lag:]
+        us = us_plan[lag:]
+        f = f_plan[lag:]
+        index = 0
+
+    tau = robot_id_ctrl.id_joint_torques(q, v, xs[index][:pin_robot.model.nq].copy(), xs[index][pin_robot.model.nq:].copy() \
+                                         , us[index], f[index], contact_configuration)
+    robot.send_joint_command(tau)
+
+    time.sleep(0.0001)
+    sim_t += sim_dt
+    pln_ctr = int((pln_ctr + 1)%(plan_freq/sim_dt))
+    index += 1
+
+    
+
+ 
+    # Read the robot sensors and states
+    foot_contact = robot.get_current_contacts()
+
+    
+    # Get IMU data
+    imu_gyro, imu_acc, imu_pos, imu_vel = robot.get_imu_data()
+
+    # Get state data
+    qj, dqj = robot.get_state()
+    base_pos = np.array(qj[0:3])
+    base_orn = np.array(qj[3:7])
+    motor_pos = np.array(qj[7:])
+    base_vel = np.array(dqj[0:3])
+    motors_vel = np.array(dqj[6:])
+    
+
+    foot_contact_buffer[:, buffer_index] = foot_contact
+    motor_position_buffer[:, buffer_index] = motor_pos
+    motor_velocity_buffer[:, buffer_index] = motors_vel
+    imu_gyro_buffer[:, buffer_index] = imu_gyro
+    imu_acc_buffer[:, buffer_index] = imu_acc
+    base_pos_buffer[:, buffer_index] = base_pos
+    base_vel_buffer[:, buffer_index] = base_vel
+    base_orn_buffer[:, buffer_index] = base_orn
+
+
+    torques_data_buffer[:, buffer_index] = tau
+
+    
+    buffer_index += 1
+        
+    if buffer_index==traj_length:
+
+        buffer_index = 0
+        robot.restoreState(state_id)
+        
+        # Collect the Data for training
+        foot_contacts.append(foot_contact_buffer)
+        motor_positions.append(motor_position_buffer)
+        motor_velocities.append(motor_velocity_buffer)
+        imu_gyros.append(imu_gyro_buffer)
+        imu_accs.append(imu_acc_buffer)
+        base_positions.append(base_pos_buffer)
+        base_velocities.append(base_vel_buffer)
+        base_orientations.append(base_orn_buffer)
+
+        torques_data.append(torques_data_buffer)
+
+
+        # Reset the buffer
+        foot_contact_buffer = np.zeros((4, traj_length), dtype=np.float32)
+        motor_position_buffer = np.zeros((12, traj_length), dtype=np.float32)
+        motor_velocity_buffer = np.zeros((12, traj_length), dtype=np.float32)
+        imu_gyro_buffer = np.zeros((3, traj_length), dtype=np.float32)
+        imu_acc_buffer = np.zeros((3, traj_length), dtype=np.float32)
+        base_pos_buffer = np.zeros((3, traj_length), dtype=np.float32)
+        base_vel_buffer = np.zeros((3, traj_length), dtype=np.float32)
+        base_orn_buffer = np.zeros((4, traj_length), dtype=np.float32)
+
+
+        torques_data_buffer = np.zeros((12, traj_length), dtype=np.float32)
+
+
+    if (q[0] > 50 or q[0] < -50 or q[1] > 50 or q[1] < -50 or q[2] > 0.7 or q[2] < 0.1):
+        robot.restoreState(state_id)
+        v_des = np.array([0.0, 0.0, 0.0])
+        num_failure += 1
+        buffer_index = 0
+
+print("num of failure =", num_failure)
+
+# robot.stop_recording()
+
+# Save the data 
+foot_contacts_data = np.concatenate(foot_contacts, axis=1) 
+motor_positions_data = np.concatenate(motor_positions, axis=1)
+motor_velocities_data = np.concatenate(motor_velocities, axis=1)
+imu_gyros_data = np.concatenate(imu_gyros, axis=1)
+imu_accs_data = np.concatenate(imu_accs, axis=1)
+base_positions_data = np.concatenate(base_positions, axis=1)
+base_velocities_data = np.concatenate(base_velocities, axis=1)
+base_orientations_data = np.concatenate(base_orientations, axis=1)
+
+
+torques_data_buffer = np.concatenate(torques_data, axis=1)
+
+# Define the path for saving
+path = "/home/anudeep/devel/workspace/src/data/out_distri/"
+
+# Check the shapes of all data arrays before concatenation
+print("Foot Contacts Shape:", foot_contacts_data.shape)
+print("Motor Positions Shape:", motor_positions_data.shape)
+print("Motor Velocities Shape:", motor_velocities_data.shape)
+print("IMU Gyros Shape:", imu_gyros_data.shape)
+print("IMU Accs Shape:", imu_accs_data.shape)
+print("Base Positions Shape:", base_positions_data.shape)
+print("Base Velocities Shape:", base_velocities_data.shape)
+print("Base Orientations Shape:", base_orientations_data.shape)
+
+
+print("Torques Data Shape:", torques_data_buffer.shape)
+
+kp = gait_params.kp
+kv = gait_params.kd
+
+print("kp:", kp , "kv:", kv)
+
+# Save the data into a csv file
+csv_file = path + 'go1_trot_data_actions_eval_out_disti.csv'
+
 with open(csv_file, mode='w', newline='') as file:
     writer = csv.writer(file)
     writer.writerow(["time", "base_pos_x", "base_pos_y", "base_pos_z", "base_ori_x", "base_ori_y", "base_ori_z", "base_ori_w",
@@ -74,67 +271,25 @@ with open(csv_file, mode='w', newline='') as file:
                      "qj_1", "qj_2", "qj_3", "qj_4", "qj_5", "qj_6", "qj_7", "qj_8", "qj_9", "qj_10", "qj_11", "qj_12",
                      "dqj_1", "dqj_2", "dqj_3", "dqj_4", "dqj_5", "dqj_6", "dqj_7", "dqj_8", "dqj_9", "dqj_10", "dqj_11", "dqj_12",
                      "foot_1", "foot_2", "foot_3", "foot_4",
-                     "tau_1", "tau_2", "tau_3", "tau_4", "tau_5", "tau_6", "tau_7", "tau_8", "tau_9", "tau_10", "tau_11", "tau_12"])
+                     "tau_1", "tau_2", "tau_3", "tau_4", "tau_5", "tau_6", "tau_7", "tau_8", "tau_9", "tau_10", "tau_11", "tau_12",
+                     "a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9", "a10", "a11", "a12"])
+
+    for i in range(foot_contacts_data.shape[1]):
+        # calculate the actions
+        a = []
+        for j in range(12):
+            a_j = motor_positions_data[j, i] + (torques_data_buffer[j, i] + kv * motor_velocities_data[j, i]) / kp
+            a.append(a_j)
 
 
-    # Simulation Loop
-    for o in range(simulation_time):
-        if o == 750:
-            state_id = robot.saveState()
-
-        q, v = robot.get_state()
-
-        # Plan trajectory
-        if pln_ctr == 0:
-            contact_configuration = robot.get_current_contacts()
-            xs_plan, us_plan, f_plan = gg.optimize(q, v, np.round(sim_t, 3), v_des, w_des)
-
-        # Select trajectory based on planning counter
-        if o < int(plan_freq / sim_dt) - 1:
-            xs, us, f = xs_plan, us_plan, f_plan
-        elif pln_ctr == lag and o > int(plan_freq / sim_dt) - 1:
-            lag = 0
-            xs = xs_plan[lag:]
-            us = us_plan[lag:]
-            f = f_plan[lag:]
-
-        # Calculate joint torques
-        tau = robot_id_ctrl.id_joint_torques(q, v, xs[pln_ctr][:pin_robot.model.nq].copy(),
-                                                xs[pln_ctr][pin_robot.model.nq:].copy(), us[pln_ctr], f[pln_ctr],
-                                                contact_configuration)
-
-        # Get IMU data
-        imu_gyro, imu_acc, imu_pos, imu_vel = robot.get_imu_data()
-
-        # Get state data
-        qj, dqj = robot.get_state()
-        base_pos = np.array(qj[0:3])
-        base_orn = np.array(qj[3:7])
-        motor_pos = np.array(qj[7:])
-        base_vel = np.array(dqj[0:3])
-        motors_vel = np.array(dqj[6:])
-        foot_contact = robot.get_current_contacts()
-
-        # Write data to CSV
-        writer.writerow([sim_t, base_pos[0], base_pos[1], base_pos[2], base_orn[0], base_orn[1], base_orn[2], base_orn[3],
-                            base_vel[0], base_vel[1], base_vel[2],
-                            imu_acc[0], imu_acc[1], imu_acc[2],
-                            imu_gyro[0], imu_gyro[1], imu_gyro[2],
-                            *motor_pos,  # Unpack motor positions
-                            *motors_vel,  # Unpack motors velocities
-                            *foot_contact,  # Unpack floor contacts
-                            *tau])  # Unpack torques
-
-        # Send joint commands
-        robot.send_joint_command(tau)
-
-        sim_t += sim_dt
-        pln_ctr = int((pln_ctr + 1) % (plan_freq / sim_dt))
-
-        # # restore the robot to the saved state one the trajectory time is reached
-        # if o == buffer:
-        #     robot.restoreState(state_id)
-        #     buffer = o + trajectory_steps
-
-
-print("##############    DONE    ##############")
+        writer.writerow([i, base_positions_data[0, i], base_positions_data[1, i], base_positions_data[2, i], base_orientations_data[0, i], base_orientations_data[1, i], base_orientations_data[2, i], base_orientations_data[3, i],
+                         base_velocities_data[0, i], base_velocities_data[1, i], base_velocities_data[2, i],
+                         imu_accs_data[0, i], imu_accs_data[1, i], imu_accs_data[2, i],
+                         imu_gyros_data[0, i], imu_gyros_data[1, i], imu_gyros_data[2, i],
+                         motor_positions_data[0 ,i], motor_positions_data[1, i], motor_positions_data[2, i], motor_positions_data[3, i], motor_positions_data[4, i], motor_positions_data[5, i], motor_positions_data[6, i], motor_positions_data[7, i], motor_positions_data[8, i], motor_positions_data[9, i], motor_positions_data[10, i], motor_positions_data[11, i],
+                         motor_velocities_data[0, i], motor_velocities_data[1, i], motor_velocities_data[2, i], motor_velocities_data[3, i], motor_velocities_data[4, i], motor_velocities_data[5, i], motor_velocities_data[6, i], motor_velocities_data[7, i], motor_velocities_data[8, i], motor_velocities_data[9, i], motor_velocities_data[10, i], motor_velocities_data[11, i],
+                         foot_contacts_data[0, i], foot_contacts_data[1, i], foot_contacts_data[2, i], foot_contacts_data[3, i],
+                         torques_data_buffer[0, i], torques_data_buffer[1, i], torques_data_buffer[2, i], torques_data_buffer[3, i], torques_data_buffer[4, i], torques_data_buffer[5, i], torques_data_buffer[6, i], torques_data_buffer[7, i], torques_data_buffer[8, i], torques_data_buffer[9, i], torques_data_buffer[10, i], torques_data_buffer[11, i],
+                         a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11]])
+        
+print("Data saved successfully!")

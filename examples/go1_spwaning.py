@@ -1,13 +1,15 @@
 import time
 import numpy as np
 import pinocchio as pin
+import random
+from mim_data_utils import DataLogger
 from robot_properties_go1.go1_wrapper import Go1Robot, Go1Config
 from mpc.go1_cyclic_gen import Go1MpcGaitGen
-from motions.cyclic.go1_motion import trot
-from envs.pybullet_env import PyBulletEnv
+from motions.cyclic.go1_motion import trot, jump, stand, bound
+from envs.pybullet_terrain_env import PyBulletTerrainEnv
 from controllers.robot_id_controller import InverseDynamicsController
+import csv
 
-# ─────────────── 1. Setup ───────────────
 pin_robot = Go1Config.buildRobotWrapper()
 urdf_path = Go1Config.urdf_path
 
@@ -23,8 +25,9 @@ x0 = np.concatenate([q0, pin.utils.zero(pin_robot.model.nv)])
 
 f_arr = ["FL_foot_fixed", "FR_foot_fixed", "RL_foot_fixed", "RR_foot_fixed"] 
 
-v_des = np.array([0.3, 0., 0.0])  
+v_des = np.array([0.46,0.0,0.0])
 w_des = 0.0
+
 plan_freq = 0.05
 update_time = 0.0
 
@@ -35,31 +38,39 @@ pln_ctr = 0
 
 gait_params = trot
 
-kp = gait_params.kp
-kv = gait_params.kd
-
 lag = int(update_time/sim_dt)
 gg = Go1MpcGaitGen(pin_robot, urdf_path, x0, plan_freq, q0, None)
 
 gg.update_gait_params(gait_params, sim_t)
 
-robot = PyBulletEnv(Go1Robot, q0, v0)
+robot = PyBulletTerrainEnv(Go1Robot, q0, v0)
 
 robot_id_ctrl = InverseDynamicsController(pin_robot, f_arr)
 robot_id_ctrl.set_gains(gait_params.kp, gait_params.kd)
 
-trj = 10 * 1000
+trj = 15 * 1000
 
 simulation_time = trj + 1
+
+
+traj_length = trj
+
 
 state_id = robot.saveState()
 num_failure = 0
 
+
+# robot.start_recording('go1_trot_nmpc.mp4')
+
 for o in range(simulation_time):    
+    # Capture an image and save data for every 100th iteration 
+    if o % 100 == 0:
+            robot.save_image(o)
+
     q, v = robot.get_state()
-    
     if pln_ctr == 0:
         contact_configuration = robot.get_current_contacts()
+        pr_st = time.time()
         xs_plan, us_plan, f_plan = gg.optimize(q, v, np.round(sim_t,3), v_des, w_des)
 
     if o < int(plan_freq/sim_dt) - 1:
@@ -73,17 +84,17 @@ for o in range(simulation_time):
         us = us_plan[lag:]
         f = f_plan[lag:]
         index = 0
-    
-    tau_t = robot_id_ctrl.id_joint_torques(q, v, xs[index][:pin_robot.model.nq].copy(), xs[index][pin_robot.model.nq:].copy(), us[index], f[index], contact_configuration)
-    robot.send_joint_command(tau_t)
-    
+
+    tau = robot_id_ctrl.id_joint_torques(q, v, xs[index][:pin_robot.model.nq].copy(), xs[index][pin_robot.model.nq:].copy() \
+                                         , us[index], f[index], contact_configuration)
+    robot.send_joint_command(tau)
+
+    time.sleep(0.0001)
     sim_t += sim_dt
-    pln_ctr = int((pln_ctr + 1) % (plan_freq/sim_dt))
+    pln_ctr = int((pln_ctr + 1)%(plan_freq/sim_dt))
     index += 1
 
-    if (q[0] > 50 or q[0] < -50 or q[1] > 50 or q[1] < -50 or q[2] > 0.7 or q[2] < 0.1):
-        robot.restoreState(state_id)
-        v_des = np.array([0.0, 0.0, 0.0])
-        num_failure += 1
+
 
 print("num of failure =", num_failure)
+

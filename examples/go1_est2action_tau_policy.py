@@ -75,7 +75,7 @@ for o in range(num_iterations):
     total_tau_pd.append(tau_pd)
 
     # Combine PD torques and predicted torques
-    fin_tau = predicted_torques[o] + tau_pd
+    fin_tau = predicted_torques[o]
 
     # fin_tau = predicted_torques[o]
 

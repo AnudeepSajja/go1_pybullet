@@ -10,11 +10,6 @@ import time
 
 from torch.utils.tensorboard import SummaryWriter
 
-
-from test_slider import PDGainController  
-
-
-
 # Set device
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -29,13 +24,8 @@ robot = PyBulletEnv(Go1Robot, q0, v0)
 
 # Load evaluation data from CSV file
 
-# data_path = "/home/anudeep/devel/workspace/src/data/jump_data/go1_jump_data_eval.csv"
-# data_path = "/home/anudeep/devel/workspace/src/data/go1_eval/go1_trot_data_eval.csv"
 
-# data_path = "/home/anudeep/devel/workspace/src/data/eval_data/go1_trot_data_eval.csv"
-data_path = "/home/anudeep/devel/workspace/src/data/trot_with_vdes/with_phase/go1_trot_data_actions_eval.csv"
-# data_path = "/home/anudeep/devel/workspace/src/data/eval_data/go1_jump_data_eval.csv"
-# data_path = "/home/anudeep/devel/workspace/src/data/eval_data/go1_bound_data_actions_eval.csv"
+data_path = "/home/anudeep/devel/workspace/src/data/mtl_comb/eval_combined.csv"
 # data_path = "/home/anudeep/devel/workspace/src/data/eval_data/go1_bound_data_actions_eval.csv"
 
 
@@ -52,17 +42,12 @@ data = pd.read_csv(data_path).drop(columns=['time'])
 actual_torques = data[['tau_' + str(i) for i in range(1, 13)]].values
 
 # Load the predicted Qs
-# 
-# qs_path = "/home/anudeep/devel/workspace/src/data/predicted_actions/predicted_action_q_trot.csv"
-qs_path = "/home/anudeep/devel/workspace/data_humanoids/predictions/humaoids_stl_trot_q.csv"
-# qs_path = "/home/anudeep/devel/workspace/src/data/predicted_actions/predicted_action_q_jump.csv"
-# qs_path = "/home/anudeep/devel/workspace/src/data/predicted_actions/predicted_action_q_bound.csv"
-# qs_path = "/home/anudeep/devel/workspace/src/data/predicted_actions/predicted_action_q_walk.csv"
+
+qs_path = "/home/anudeep/devel/workspace/src/data/mtl_comb/predicted_actions_combined.csv"
 
 
-# qs_path = "/home/anudeep/devel/workspace/src/data/predicted_tau/predicted_action_q_jump.csv"
-# qs_path = "/home/anudeep/devel/workspace/src/data/predicted_tau/predicted_action_q_out_distri.csv"
-# qs_path = "/home/anudeep/devel/workspace/src/data/predicted_tau/predicted_action_q_trot.csv"
+
+
 
 if not os.path.exists(qs_path):
     raise FileNotFoundError(f"Data path {qs_path} does not exist.")
@@ -71,11 +56,8 @@ qs_path = pd.read_csv(qs_path)
 predicted_qs = qs_path[['a' + str(i) for i in range(1, 13)]].values
 
 # PD control gains
-# kp = np.array([12] * 12) 
-# kd = np.array([1.75] * 12)  
-
-# kp_array = np.array([20.0, 25.0, 30.0] * 4)  # hip, thigh, knee pattern
-# kd_array = np.array([1.5, 2.0, 1.5] * 4)
+kp = np.array([65.0] * 12) 
+kd = np.array([5] * 12)  
 
 
 # Initialize the list to store the combined torques
@@ -84,17 +66,8 @@ predicted_tau = []
 # Ensure the number of iterations does not exceed the available predicted data
 num_iterations = len(predicted_qs)
 
-# Init
-pd_slider = PDGainController()
-kp_array = np.array(pd_slider.get_kp_array())
-kd_array = np.array(pd_slider.get_kd_array())
-
-# robot.start_recording('go1_end2ned_trot_mtl.mp4')
+robot.start_recording('go1_mtl_combined.mp4')
 for o in range(num_iterations):
-    
-    kp_array = np.array(pd_slider.get_kp_array())
-    kd_array = np.array(pd_slider.get_kd_array())
-    
     # get the current joint positions and velocities
     qj, dqj = robot.get_state()
     q_current = np.array(qj[7:])  # Current joint positions
@@ -104,9 +77,7 @@ for o in range(num_iterations):
     pos_err = predicted_qs[o] - q_current
     vel_err = np.zeros(12) - v_current
 
-    # tau_cal = kp * pos_err + kd * vel_err
-    
-    tau_cal = kp_array * pos_err + kd_array * vel_err
+    tau_cal = kp * pos_err + kd * vel_err
 
     # Send the torques to the robot
     robot.send_joint_command(tau_cal)
@@ -116,11 +87,11 @@ for o in range(num_iterations):
 
     time.sleep(0.001) # Sleep for 1ms, i.e., 1000Hz
 
-# robot.stop_recording()
+robot.stop_recording()
 
 # Ensure the tensorboard logging directory exists
 # log_dir = '/home/anudeep/devel/workspace/runs/go1_end2ned_pd_policy_taus'
-log_dir = '/home/anudeep/devel/workspace/runs/go1_end2ned_pd_policy_trot_mtl'
+log_dir = '/home/anudeep/devel/workspace/runs/go1_end2ned_mtl_comb'
 
 # log_dir = '/home/anudeep/devel/workspace/runs/go1_end2ned_pd_policy_out_distri'
 os.makedirs(log_dir, exist_ok=True)

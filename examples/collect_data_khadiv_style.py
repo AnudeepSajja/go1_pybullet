@@ -25,7 +25,7 @@ x0 = np.concatenate([q0, pin.utils.zero(pin_robot.model.nv)])
 
 f_arr = ["FL_foot_fixed", "FR_foot_fixed", "RL_foot_fixed", "RR_foot_fixed"] 
 
-v_des = np.array([0.3,0.1,0.0])  # 0.56 - jump, 0.7 - bound, 0.8 - trot
+v_des = np.array([0.8, 0.0, 0.0])  # 0.56 - jump, 0.7 - bound, 0.8 - trot
 # v1 = np.array([0.38, 0.0, 0.0])
 # v2 = np.array([0.56, 0.0, 0.0])
 
@@ -50,7 +50,7 @@ robot = PyBulletEnv(Go1Robot, q0, v0)
 robot_id_ctrl = InverseDynamicsController(pin_robot, f_arr)
 robot_id_ctrl.set_gains(gait_params.kp, gait_params.kd)
 
-trj = 15 * 1000
+trj = 2 * 1000
 
 simulation_time = trj + 1
 
@@ -79,6 +79,9 @@ imu_acc_buffer = np.zeros((3, traj_length), dtype=np.float32)
 base_pos_buffer = np.zeros((3, traj_length), dtype=np.float32)
 base_vel_buffer = np.zeros((3, traj_length), dtype=np.float32)
 base_orn_buffer = np.zeros((4, traj_length), dtype=np.float32)
+
+
+
 
 # print(motor_position_buffer.shape)
 # print(foot_forces_buffer.shape)
@@ -113,6 +116,7 @@ for o in range(simulation_time):
 
     # --- Store sensor data to buffers ---
     foot_contact_buffer[:, buffer_index] = foot_contact
+
     motor_position_buffer[:, buffer_index] = motor_pos
     motor_velocity_buffer[:, buffer_index] = motors_vel
     imu_gyro_buffer[:, buffer_index] = imu_gyro
@@ -140,46 +144,19 @@ for o in range(simulation_time):
         f = f_plan[lag:]
         index = 0
 
+    # calculate the torques
     tau = robot_id_ctrl.id_joint_torques(q, v, xs[index][:pin_robot.model.nq].copy(), xs[index][pin_robot.model.nq:].copy() \
                                          , us[index], f[index], contact_configuration)
+    # set the torques to the robot
     robot.send_joint_command(tau)
+    
+    # Store the torques to the buffer    
+    torques_data_buffer[:, buffer_index] = tau
 
     time.sleep(0.0001)
     sim_t += sim_dt
     pln_ctr = int((pln_ctr + 1)%(plan_freq/sim_dt))
     index += 1
-
-    
-
- 
-    # Read the robot sensors and states
-    foot_contact = robot.get_current_contacts()
-
-    
-    # Get IMU data
-    imu_gyro, imu_acc, imu_pos, imu_vel = robot.get_imu_data()
-
-    # Get state data
-    qj, dqj = robot.get_state()
-    base_pos = np.array(qj[0:3])
-    base_orn = np.array(qj[3:7])
-    motor_pos = np.array(qj[7:])
-    base_vel = np.array(dqj[0:3])
-    motors_vel = np.array(dqj[6:])
-    
-
-    foot_contact_buffer[:, buffer_index] = foot_contact
-    motor_position_buffer[:, buffer_index] = motor_pos
-    motor_velocity_buffer[:, buffer_index] = motors_vel
-    imu_gyro_buffer[:, buffer_index] = imu_gyro
-    imu_acc_buffer[:, buffer_index] = imu_acc
-    base_pos_buffer[:, buffer_index] = base_pos
-    base_vel_buffer[:, buffer_index] = base_vel
-    base_orn_buffer[:, buffer_index] = base_orn
-
-
-    torques_data_buffer[:, buffer_index] = tau
-
     
     buffer_index += 1
         
@@ -236,10 +213,13 @@ base_velocities_data = np.concatenate(base_velocities, axis=1)
 base_orientations_data = np.concatenate(base_orientations, axis=1)
 
 
+
+
+
 torques_data_buffer = np.concatenate(torques_data, axis=1)
 
 # Define the path for saving
-path = "/home/anudeep/devel/workspace/src/data/out_distri/"
+path = "/home/anudeep/devel/workspace/src/data/trot_with_vdes/"
 
 # Check the shapes of all data arrays before concatenation
 print("Foot Contacts Shape:", foot_contacts_data.shape)
@@ -260,7 +240,7 @@ kv = gait_params.kd
 print("kp:", kp , "kv:", kv)
 
 # Save the data into a csv file
-csv_file = path + 'go1_trot_data_actions_eval_out_disti.csv'
+csv_file = path + 'go1_trot_data_actions_.csv'
 
 with open(csv_file, mode='w', newline='') as file:
     writer = csv.writer(file)
@@ -272,7 +252,8 @@ with open(csv_file, mode='w', newline='') as file:
                      "dqj_1", "dqj_2", "dqj_3", "dqj_4", "dqj_5", "dqj_6", "dqj_7", "dqj_8", "dqj_9", "dqj_10", "dqj_11", "dqj_12",
                      "foot_1", "foot_2", "foot_3", "foot_4",
                      "tau_1", "tau_2", "tau_3", "tau_4", "tau_5", "tau_6", "tau_7", "tau_8", "tau_9", "tau_10", "tau_11", "tau_12",
-                     "a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9", "a10", "a11", "a12"])
+                     "a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9", "a10", "a11", "a12",
+                     "v_des_x", "v_des_y", "v_des_yaw"])
 
     for i in range(foot_contacts_data.shape[1]):
         # calculate the actions
@@ -290,6 +271,7 @@ with open(csv_file, mode='w', newline='') as file:
                          motor_velocities_data[0, i], motor_velocities_data[1, i], motor_velocities_data[2, i], motor_velocities_data[3, i], motor_velocities_data[4, i], motor_velocities_data[5, i], motor_velocities_data[6, i], motor_velocities_data[7, i], motor_velocities_data[8, i], motor_velocities_data[9, i], motor_velocities_data[10, i], motor_velocities_data[11, i],
                          foot_contacts_data[0, i], foot_contacts_data[1, i], foot_contacts_data[2, i], foot_contacts_data[3, i],
                          torques_data_buffer[0, i], torques_data_buffer[1, i], torques_data_buffer[2, i], torques_data_buffer[3, i], torques_data_buffer[4, i], torques_data_buffer[5, i], torques_data_buffer[6, i], torques_data_buffer[7, i], torques_data_buffer[8, i], torques_data_buffer[9, i], torques_data_buffer[10, i], torques_data_buffer[11, i],
-                         a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11]])
+                         a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11],
+                        v_des[0], v_des[1], v_des[2]])
         
 print("Data saved successfully!")
