@@ -97,7 +97,7 @@ Installation
     ```
 
 
-in opt/opernrobots/setup.bash
+in opt/opernrobots/setup.bash update
 ```
 #! /bin/bash
 export PATH="/opt/openrobots/bin:$PATH"
