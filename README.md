@@ -97,4 +97,13 @@ Installation
     ```
 
 
-
+in opt/opernrobots/setup.bash
+```
+#! /bin/bash
+export PATH="/opt/openrobots/bin:$PATH"
+export PKG_CONFIG_PATH="/opt/openrobots/lib/pkgconfig:$PKG_CONFIG_PATH"
+export LD_LIBRARY_PATH="/opt/openrobots/lib:$LD_LIBRARY_PATH"
+export LD_LIBRARY_PATH="/opt/openrobots/lib/dynamic-graph-plugins:$LD_LIBRARY_PATH"
+export PYTHONPATH="/opt/openrobots/lib/python3.6/site-packages:$PYTHONPATH"
+export ROS_PACKAGE_PATH="/opt/openrobots/share:$ROS_PACKAGE_PATH"
+```
