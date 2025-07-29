@@ -33,7 +33,11 @@ https://github.com/machines-in-motion/machines-in-motion.github.io/wiki/laas_pac
 Installation
 ```bash
     sudo apt install -y robotpkg-dynamic-graph-v3=VERSION
-``` 
+```
+sometimes
+```
+    sudo apt install --allow-downgrades -y robotpkg-dynamic-graph-v3=VERSION
+```
 
 3. Installation for MIM
     A) Installing Treep
