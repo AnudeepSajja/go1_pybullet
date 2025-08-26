@@ -79,6 +79,15 @@ sometimes
         cd devel/workspace
         colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release --packages-select
     ```
+    sometimes
+   ```
+    rm -rf build install log  # clear cached config
+    
+    colcon build --cmake-args \
+      -DCMAKE_PREFIX_PATH=/opt/openrobots \
+      -DPYTHON_EXECUTABLE=$(which python3)
+
+   ```
 
     F) Put followings in setup.bash
     ```bash
